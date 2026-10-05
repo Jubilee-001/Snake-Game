@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Python + JS Snake Game</title>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --panel-color: #1e293b;
+            --text-color: #f8fafc;
+            --accent-color: #22c55e;
+            --danger-color: #ef4444;
+            --border-color: #334155;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: var(--panel-color);
+            padding: 24px;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-color);
+            max-width: 460px;
+            width: 100%;
+        }
+
+        h1 {
+            margin: 0 0 16px 0;
+            font-size: 1.5rem;
+            letter-spacing: 0.05em;
+            color: #38bdf8;
+        }
+
+        .scoreboard {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            margin-bottom: 16px;
+            font-weight: 600;
+            font-size: 1.05rem;
+        }
+
+        .score-box {
+            background: rgba(15, 23, 42, 0.6);
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        .canvas-wrapper {
+            position: relative;
+            width: 400px;
+            height: 400px;
+            border: 2px solid var(--border-color);
+            border-radius: 8px;
+            overflow: hidden;
+            background-color: #020617;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(2, 6, 23, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            transition: opacity 0.2s ease-in-out;
+            z-index: 10;
+        }
+
+        .overlay.hidden {
+            display: none;
+        }
+
+        .overlay h2 {
+            font-size: 2rem;
+            margin: 0 0 8px 0;
+        }
+
+        .overlay p {
+            color: #94a3b8;
+            margin: 0 0 20px 0;
+        }
+
+        .btn {
+            background-color: var(--accent-color);
+            color: white;
+            border: none;
+            padding: 10px 24px;
+            font-size: 1rem;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn:hover {
+            background-color: #16a34a;
+            transform: translateY(-1px);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .controls-hint {
+            margin-top: 16px;
+            font-size: 0.85rem;
+            color: #64748b;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>🐍 AUTHORITATIVE SNAKE</h1>
+        
+        <div class="scoreboard">
+            <div class="score-box">Score: <span id="scoreVal">0</span></div>
+            <div class="score-box">High Score: <span id="highScoreVal">0</span></div>
+        </div>
+
+        <div class="canvas-wrapper">
+            <canvas id="gameCanvas" width="400" height="400"></canvas>
+            
+            <div id="gameOverlay" class="overlay hidden">
+                <h2 id="overlayTitle">GAME OVER</h2>
+                <p id="overlayMessage">Your snake crashed!</p>
+                <button id="overlayBtn" class="btn" onclick="resetGame()">Play Again</button>
+            </div>
+        </div>
+
+        <div class="controls-hint">
+            Use <b>Arrow Keys</b> or <b>WASD</b> to steer. Press <b>Space</b> or <b>P</b> to Pause.
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreVal = document.getElementById('scoreVal');
+        const highScoreVal = document.getElementById('highScoreVal');
+        const gameOverlay = document.getElementById('gameOverlay');
+        const overlayTitle = document.getElementById('overlayTitle');
+        const overlayMessage = document.getElementById('overlayMessage');
+        const overlayBtn = document.getElementById('overlayBtn');
+
+        const GRID_SIZE = 20;
+        const CELL_SIZE = 20;
+
+        let lastRenderTime = 0;
+        const TICK_INTERVAL = 200;
+
+        window.addEventListener('keydown', e => {
+            let key = e.key;
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(key)) {
+                e.preventDefault();
+            }
+            
+            // Pause handling (Space or P)
+            if (key === ' ' || key === 'p' || key === 'P') {
+                fetch('/pause', { method: 'POST' })
+                    .then(res => res.json())
+                    .then(state => render(state))
+                    .catch(err => console.error("Pause error:", err));
+                return;
+            }
+
+            let dir = null;
+            if (key === 'ArrowUp' || key === 'w' || key === 'W') dir = 'UP';
+            else if (key === 'ArrowDown' || key === 's' || key === 'S') dir = 'DOWN';
+            else if (key === 'ArrowLeft' || key === 'a' || key === 'A') dir = 'LEFT';
+            else if (key === 'ArrowRight' || key === 'd' || key === 'D') dir = 'RIGHT';
+
+            if (dir) {
+                fetch('/input', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ direction: dir })
+                }).catch(err => console.error("Input error:", err));
+            }
+        });
+
+        function fetchState() {
+            fetch('/state')
+                .then(res => res.json())
+                .then(state => render(state))
+                .catch(err => console.error("State fetch error:", err));
+        }
+
+        function resetGame() {
+            fetch('/reset', { method: 'POST' })
+                .then(res => res.json())
+                .then(state => render(state));
+        }
+
+        function render(state) {
+            scoreVal.textContent = state.score;
+            highScoreVal.textContent = state.high_score;
+
+            if (state.status === 'GAME_OVER') {
+                overlayTitle.textContent = "GAME OVER";
+                overlayTitle.style.color = "var(--danger-color)";
+                overlayMessage.textContent = `Final Score: ${state.score}`;
+                overlayBtn.textContent = "Play Again";
+                overlayBtn.onclick = resetGame;
+                gameOverlay.classList.remove('hidden');
+            } else if (state.status === 'WIN') {
+                overlayTitle.textContent = "YOU WIN! 🎉";
+                overlayTitle.style.color = "var(--accent-color)";
+                overlayMessage.textContent = `Perfect score! Final Score: ${state.score}`;
+                overlayBtn.textContent = "Play Again";
+                overlayBtn.onclick = resetGame;
+                gameOverlay.classList.remove('hidden');
+            } else if (state.status === 'PAUSED') {
+                overlayTitle.textContent = "GAME PAUSED";
+                overlayTitle.style.color = "#38bdf8";
+                overlayMessage.textContent = "Press Space or P to resume";
+                overlayBtn.textContent = "Resume";
+                overlayBtn.onclick = () => {
+                    fetch('/pause', { method: 'POST' })
+                        .then(res => res.json())
+                        .then(st => render(st));
+                };
+                gameOverlay.classList.remove('hidden');
+            } else {
+                gameOverlay.classList.add('hidden');
+            }
+
+            ctx.fillStyle = '#020617';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.strokeStyle = '#090d16';
+            ctx.lineWidth = 0.5;
+            for (let i = 0; i <= GRID_SIZE; i++) {
+                ctx.beginPath();
+                ctx.moveTo(i * CELL_SIZE, 0);
+                ctx.lineTo(i * CELL_SIZE, canvas.height);
+                ctx.stroke();
+
+                ctx.beginPath();
+                ctx.moveTo(0, i * CELL_SIZE);
+                ctx.lineTo(canvas.width, i * CELL_SIZE);
+                ctx.stroke();
+            }
+
+            ctx.fillStyle = '#ef4444';
+            ctx.shadowColor = '#ef4444';
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            ctx.arc(
+                state.food.x * CELL_SIZE + CELL_SIZE / 2,
+                state.food.y * CELL_SIZE + CELL_SIZE / 2,
+                CELL_SIZE / 2 - 3,
+                0,
+                2 * Math.PI
+            );
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            state.snake.forEach((seg, index) => {
+                ctx.fillStyle = index === 0 ? '#22c55e' : '#15803d';
+                ctx.strokeStyle = '#020617';
+                ctx.lineWidth = 2;
+                
+                let rx = seg.x * CELL_SIZE + 1;
+                let ry = seg.y * CELL_SIZE + 1;
+                let rw = CELL_SIZE - 2;
+                let rh = CELL_SIZE - 2;
+                
+                ctx.beginPath();
+                ctx.roundRect(rx, ry, rw, rh, 4);
+                ctx.fill();
+                ctx.stroke();
+            });
+        }
+
+        function gameLoop(timestamp) {
+            if (!lastRenderTime) lastRenderTime = timestamp;
+            let elapsed = timestamp - lastRenderTime;
+
+            if (elapsed >= TICK_INTERVAL) {
+                lastRenderTime = timestamp - (elapsed % TICK_INTERVAL);
+                
+                fetch('/tick', { method: 'POST' })
+                    .then(res => res.json())
+                    .then(state => render(state))
+                    .catch(err => console.error("Tick error:", err));
+            }
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        fetchState();
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
