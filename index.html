@@ -73,6 +73,20 @@
             background-color: #020617;
         }
 
+        /* Screen Shake Keyframes */
+        @keyframes shake {
+            0% { transform: translate(1px, 1px) rotate(0deg); }
+            20% { transform: translate(-4px, 2px) rotate(-1deg); }
+            40% { transform: translate(4px, -1px) rotate(1deg); }
+            60% { transform: translate(-2px, 2px) rotate(0deg); }
+            80% { transform: translate(3px, -2px) rotate(-1deg); }
+            100% { transform: translate(0, 0) rotate(0deg); }
+        }
+
+        .canvas-wrapper.shake {
+            animation: shake 0.35s ease-in-out;
+        }
+
         canvas {
             display: block;
             width: 100%;
@@ -149,7 +163,7 @@
             <div class="score-box">High Score: <span id="highScoreVal">0</span></div>
         </div>
 
-        <div class="canvas-wrapper">
+        <div class="canvas-wrapper" id="canvasWrapper">
             <canvas id="gameCanvas" width="400" height="400"></canvas>
             
             <div id="gameOverlay" class="overlay hidden">
@@ -160,12 +174,14 @@
         </div>
 
         <div class="controls-hint">
-            Use <b>Arrow Keys</b> or <b>WASD</b> to steer. Press <b>Space</b> or <b>P</b> to Pause.
+            ⭐ Golden Apple (+50pts, shrinks) | ⏱️ Clock (Slows down)<br>
+            Use <b>Arrow Keys</b> / <b>WASD</b> to steer. <b>Space/P</b> to Pause.
         </div>
     </div>
 
     <script>
         const canvas = document.getElementById('gameCanvas');
+        const canvasWrapper = document.getElementById('canvasWrapper');
         const ctx = canvas.getContext('2d');
         const scoreVal = document.getElementById('scoreVal');
         const highScoreVal = document.getElementById('highScoreVal');
@@ -178,7 +194,12 @@
         const CELL_SIZE = 20;
 
         let lastRenderTime = 0;
-        const TICK_INTERVAL = 200;
+        let latestState = null;
+        let wasGameOver = false; // Tracks state transition for screen shake trigger
+
+        // Load persisted high score from browser's localStorage on startup
+        let persistentHighScore = parseInt(localStorage.getItem('snake_high_score')) || 0;
+        highScoreVal.textContent = persistentHighScore;
 
         window.addEventListener('keydown', e => {
             let key = e.key;
@@ -186,7 +207,6 @@
                 e.preventDefault();
             }
             
-            // Pause handling (Space or P)
             if (key === ' ' || key === 'p' || key === 'P') {
                 fetch('/pause', { method: 'POST' })
                     .then(res => res.json())
@@ -218,42 +238,62 @@
         }
 
         function resetGame() {
+            canvasWrapper.classList.remove('shake');
             fetch('/reset', { method: 'POST' })
                 .then(res => res.json())
                 .then(state => render(state));
         }
 
         function render(state) {
+            latestState = state;
             scoreVal.textContent = state.score;
-            highScoreVal.textContent = state.high_score;
 
+            // Handle LocalStorage High Score check
+            if (state.score > persistentHighScore) {
+                persistentHighScore = state.score;
+                localStorage.setItem('snake_high_score', persistentHighScore);
+            }
+            highScoreVal.textContent = persistentHighScore;
+
+            // Trigger Screen Shake once on Game Over transition
             if (state.status === 'GAME_OVER') {
+                if (!wasGameOver) {
+                    canvasWrapper.classList.add('shake');
+                    wasGameOver = true;
+                }
                 overlayTitle.textContent = "GAME OVER";
                 overlayTitle.style.color = "var(--danger-color)";
                 overlayMessage.textContent = `Final Score: ${state.score}`;
                 overlayBtn.textContent = "Play Again";
                 overlayBtn.onclick = resetGame;
                 gameOverlay.classList.remove('hidden');
-            } else if (state.status === 'WIN') {
-                overlayTitle.textContent = "YOU WIN! 🎉";
-                overlayTitle.style.color = "var(--accent-color)";
-                overlayMessage.textContent = `Perfect score! Final Score: ${state.score}`;
-                overlayBtn.textContent = "Play Again";
-                overlayBtn.onclick = resetGame;
-                gameOverlay.classList.remove('hidden');
-            } else if (state.status === 'PAUSED') {
-                overlayTitle.textContent = "GAME PAUSED";
-                overlayTitle.style.color = "#38bdf8";
-                overlayMessage.textContent = "Press Space or P to resume";
-                overlayBtn.textContent = "Resume";
-                overlayBtn.onclick = () => {
-                    fetch('/pause', { method: 'POST' })
-                        .then(res => res.json())
-                        .then(st => render(st));
-                };
-                gameOverlay.classList.remove('hidden');
             } else {
-                gameOverlay.classList.add('hidden');
+                if (state.status === 'RUNNING') {
+                    wasGameOver = false;
+                    canvasWrapper.classList.remove('shake');
+                }
+
+                if (state.status === 'WIN') {
+                    overlayTitle.textContent = "YOU WIN! 🎉";
+                    overlayTitle.style.color = "var(--accent-color)";
+                    overlayMessage.textContent = `Perfect score! Final Score: ${state.score}`;
+                    overlayBtn.textContent = "Play Again";
+                    overlayBtn.onclick = resetGame;
+                    gameOverlay.classList.remove('hidden');
+                } else if (state.status === 'PAUSED') {
+                    overlayTitle.textContent = "GAME PAUSED";
+                    overlayTitle.style.color = "#38bdf8";
+                    overlayMessage.textContent = "Press Space or P to resume";
+                    overlayBtn.textContent = "Resume";
+                    overlayBtn.onclick = () => {
+                        fetch('/pause', { method: 'POST' })
+                            .then(res => res.json())
+                            .then(st => render(st));
+                    };
+                    gameOverlay.classList.remove('hidden');
+                } else {
+                    gameOverlay.classList.add('hidden');
+                }
             }
 
             ctx.fillStyle = '#020617';
@@ -273,6 +313,7 @@
                 ctx.stroke();
             }
 
+            // Draw Regular Food
             ctx.fillStyle = '#ef4444';
             ctx.shadowColor = '#ef4444';
             ctx.shadowBlur = 8;
@@ -285,8 +326,37 @@
                 2 * Math.PI
             );
             ctx.fill();
+
+            // Draw Power-Up with pulsating glow effect
+            if (state.powerup) {
+                let p = state.powerup;
+                let pulse = Math.sin(Date.now() / 200);
+                let blurAmount = 8 + pulse * 6;
+                let alpha = 0.7 + pulse * 0.3;
+
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = p.type === 'GOLDEN' ? '#eab308' : '#38bdf8';
+                ctx.shadowColor = ctx.fillStyle;
+                ctx.shadowBlur = blurAmount;
+                
+                let px = p.x * CELL_SIZE + 3;
+                let py = p.y * CELL_SIZE + 3;
+                let pw = CELL_SIZE - 6;
+                let ph = CELL_SIZE - 6;
+
+                ctx.beginPath();
+                if (p.type === 'GOLDEN') {
+                    ctx.roundRect(px, py, pw, ph, 4);
+                } else {
+                    ctx.arc(px + pw/2, py + ph/2, pw/2, 0, 2 * Math.PI);
+                }
+                ctx.fill();
+                ctx.restore();
+            }
             ctx.shadowBlur = 0;
 
+            // Draw Snake
             state.snake.forEach((seg, index) => {
                 ctx.fillStyle = index === 0 ? '#22c55e' : '#15803d';
                 ctx.strokeStyle = '#020617';
@@ -308,8 +378,12 @@
             if (!lastRenderTime) lastRenderTime = timestamp;
             let elapsed = timestamp - lastRenderTime;
 
-            if (elapsed >= TICK_INTERVAL) {
-                lastRenderTime = timestamp - (elapsed % TICK_INTERVAL);
+            let snakeLength = (latestState && latestState.snake) ? latestState.snake.length : 3;
+            let baseInterval = Math.max(70, 220 - (snakeLength - 3) * 6);
+            let dynamicInterval = (latestState && latestState.slow_down_ticks > 0) ? 200 : baseInterval;
+
+            if (elapsed >= dynamicInterval) {
+                lastRenderTime = timestamp - (elapsed % dynamicInterval);
                 
                 fetch('/tick', { method: 'POST' })
                     .then(res => res.json())
