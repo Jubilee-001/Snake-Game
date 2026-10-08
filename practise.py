@@ -4,7 +4,7 @@ GRID_WIDTH = 20
 GRID_HEIGHT = 20
 
 
-def create_new_game():
+def create_new_game(high_score = 0):
     snake = [{'x': 10, 'y': 10}, {'x': 9, 'y': 10}, {'x': 8, 'y': 10}]
 
     return {
@@ -12,7 +12,9 @@ def create_new_game():
         "direction": "RIGHT",
         "food": spawn_food(snake),
         "score": 0,
-        "status": "RUNNING"
+        "status": "RUNNING",
+        "next_direction": "RIGHT",
+        "high_score": high_score
     }
 
 def spawn_food(snake):
@@ -52,15 +54,6 @@ def get_new_head(game):
         
     return {"x": x, "y": y}
 
-
-def move_snake(game):
-    snake = game["snake"]
-    new_head = get_new_head(game)
-    snake.insert(0, new_head)
-
-    snake.pop()
-
-
 def hits_wall(cell):
     x = cell["x"]
     y = cell["y"]
@@ -84,12 +77,6 @@ def hits_self(snake, new_head, grow):
     else:
         return False
 
-snake = [{'x': 5, 'y': 5}, {'x': 4, 'y': 5}, {'x': 3, 'y': 5}]
-tail = {'x': 3, 'y': 5}
-
-print(hits_self(snake, tail, False))   # False: tail is moving away
-print(hits_self(snake, tail, True))    # True: tail stays, so it's a collision
-
 def is_eating_food(game, new_head):
     if new_head == game["food"]:
         return True
@@ -108,6 +95,8 @@ def step_game(game):
     if game["status"] != "RUNNING":
         return
 
+    game["direction"] = game["next_direction"]
+
     new_head = get_new_head(game)
 
     if hits_wall(new_head):
@@ -116,12 +105,33 @@ def step_game(game):
 
     eating = is_eating_food(game, new_head)
 
-    if eating:
+    if hits_self(game["snake"], new_head, eating):
         game["status"] = "GAME_OVER"
         return
 
-    # move_snake(game, grow)
+    move_snake(game, eating)
 
     if eating:
-        game["score"] = +1
-        game["food"] = -1
+        game["score"] += 10
+
+        if game["score"] > game["high_score"]:
+            game["high_score"] = game["score"]
+
+        game["food"] = spawn_food(game["snake"])
+
+
+def change_direction(game, new_direction):
+    opposites = {"UP": "DOWN", "DOWN": "UP", "LEFT": "RIGHT", "RIGHT": "LEFT"}
+    
+    forbidden = opposites[game["direction"]]
+
+    if new_direction != forbidden:
+        game["next_direction"] = new_direction
+
+def toggle_pause(game):
+    if game["status"] == "RUNNING":
+        game["status"] = "PAUSED"
+    elif game["status"] == "PAUSED":
+        game["status"] = "RUNNING"
+
+
