@@ -1,5 +1,13 @@
 import random
 
+
+POINTS_PER_APPLE = 10
+
+START_DELAY = 220
+APPLES_PER_LEVEL = 4
+DELAY_DROP_PER_LEVEL = 20
+MIN_DELAY = 60
+
 GRID_WIDTH = 20
 GRID_HEIGHT = 20
 
@@ -14,7 +22,8 @@ def create_new_game(high_score = 0):
         "score": 0,
         "status": "RUNNING",
         "next_direction": "RIGHT",
-        "high_score": high_score
+        "high_score": high_score,
+        "delay": START_DELAY
     }
 
 def spawn_food(snake):
@@ -115,10 +124,13 @@ def step_game(game):
     move_snake(game, eating)
 
     if eating:
-        game["score"] += 10
+        game["score"] += POINTS_PER_APPLE
 
         if game["score"] > game["high_score"]:
             game["high_score"] = game["score"]
+
+
+        game["delay"] = get_delay(game)
 
         new_food = spawn_food(game["snake"])
 
@@ -142,3 +154,15 @@ def toggle_pause(game):
         game["status"] = "PAUSED"
     elif game["status"] == "PAUSED":
         game["status"] = "RUNNING"
+
+def get_delay(game):
+    apples_eaten = game["score"] // POINTS_PER_APPLE
+    level = apples_eaten // APPLES_PER_LEVEL
+
+    delay = START_DELAY - level * DELAY_DROP_PER_LEVEL
+
+    if delay < MIN_DELAY:
+        return MIN_DELAY
+    else:
+        return delay
+
