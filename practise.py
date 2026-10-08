@@ -28,7 +28,10 @@ def spawn_food(snake):
         if cell not in snake:
             free_cells.append(cell)
 
+    if not free_cells:
+        return None 
 
+    
     chosen = random.choice(free_cells)
     return chosen
 
@@ -117,7 +120,13 @@ def step_game(game):
         if game["score"] > game["high_score"]:
             game["high_score"] = game["score"]
 
-        game["food"] = spawn_food(game["snake"])
+        new_food = spawn_food(game["snake"])
+
+        if new_food is None:
+            game["status"] = "WIN"
+        else:
+            game["food"] = new_food
+
 
 
 def change_direction(game, new_direction):
@@ -133,5 +142,3 @@ def toggle_pause(game):
         game["status"] = "PAUSED"
     elif game["status"] == "PAUSED":
         game["status"] = "RUNNING"
-
-
