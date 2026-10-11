@@ -31,7 +31,7 @@
         padding: 16px;
         background: var(--page);
         color: var(--ink);
-        font-family: sans-serif;
+        font-family: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
       }
 
       .game {
@@ -41,7 +41,7 @@
         border: 2px solid var(--ink);
         border-radius: 14px;
         padding: 20px;
-        box-shadow: 6px 6px 0 #77928348;
+        box-shadow: 6px 6px 0 var(--ink);
       }
 
       h1 {
@@ -93,8 +93,8 @@
         align-items: center;
         justify-content: center;
         text-align: center;
-        background: rgba(41, 86, 72, 0.217);
-        color: #647269;
+        background: rgba(20, 52, 42, 0.88);
+        color: #f6f9f7;
       }
 
       .overlay.hidden {
@@ -106,7 +106,7 @@
       }
       .overlay p {
         margin: 0 0 18px;
-        color: #f8faf9;
+        color: #c5d5ca;
       }
 
       button {
@@ -151,15 +151,66 @@
         color: var(--muted);
         line-height: 1.5;
       }
+
+      .modes {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .mode {
+        flex: 1;
+        padding: 8px;
+        background: transparent;
+        color: var(--ink);
+        border: 2px solid var(--ink);
+      }
+      .mode:hover {
+        background: #d5e2d9;
+      }
+      .mode.active,
+      .mode.active:hover {
+        background: var(--ink);
+        color: #fff;
+      }
+      .scores .hidden,
+      .modes.hidden {
+        display: none;
+      }
+      .scores {
+        gap: 8px;
+      }
+      #overlayTitle.big {
+        font-size: 5rem;
+        line-height: 1;
+      }
     </style>
   </head>
   <body>
     <main class="game">
       <h1>Snake</h1>
 
+      <div class="modes">
+        <button id="modeSingle" type="button" class="mode active">
+          1 Player
+        </button>
+        <button id="modeVersus" type="button" class="mode">Versus</button>
+        <button id="modeAI" type="button" class="mode">vs AI</button>
+      </div>
+
+      <div id="levels" class="modes hidden">
+        <button type="button" class="mode" data-level="easy">Easy</button>
+        <button type="button" class="mode" data-level="medium">Medium</button>
+        <button type="button" class="mode" data-level="hard">Hard</button>
+      </div>
+
       <div class="scores">
-        <div>Score <strong id="score">0</strong></div>
-        <div>High score <strong id="highScore">0</strong></div>
+        <div><span id="labelA">Score</span> <strong id="valueA">0</strong></div>
+        <div>
+          <span id="labelB">High score</span> <strong id="valueB">0</strong>
+        </div>
+        <div id="boxTime" class="hidden">
+          Time <strong id="valueTime">60</strong>
+        </div>
       </div>
 
       <div class="board">
@@ -179,38 +230,44 @@
         </div>
       </div>
 
-      <p class="hint">
-        Steer with the arrow keys or W A S D.<br />
-        Space or P pauses. Enter or R restarts.<br />
-        <span id="padStatus"
-          >Controller: press any button on it to connect.</span
-        >
-      </p>
+      <p class="hint" id="hint"></p>
+      <button
+        id="padLimitBtn"
+        type="button"
+        class="mode"
+        style="margin-top: 10px"
+      >
+        Controllers: Auto
+      </button>
     </main>
 
     <script>
-      // ---------------------------------------------------------------
-      // The backend (practise.py) decides everything about the game.
-      // This script only does three jobs:
-      //   1. ask the server for the game state and draw it
-      //   2. send key presses to the server
-      //   3. keep asking the server to "tick" so the snake moves
-      // ---------------------------------------------------------------
+      // The backend decides everything. This script draws the state, sends key presses
+      // (with a player number in versus mode) and keeps asking the server to tick.
 
       const GRID = 20; // must match GRID_WIDTH / GRID_HEIGHT in Python
       const canvas = document.getElementById("gameCanvas");
       const ctx = canvas.getContext("2d");
-      const CELL = canvas.width / GRID; // size of one cell in pixels
+      const CELL = canvas.width / GRID;
 
-      const scoreEl = document.getElementById("score");
-      const highScoreEl = document.getElementById("highScore");
+      const labelA = document.getElementById("labelA");
+      const valueA = document.getElementById("valueA");
+      const labelB = document.getElementById("labelB");
+      const valueB = document.getElementById("valueB");
+      const boxTime = document.getElementById("boxTime");
+      const valueTime = document.getElementById("valueTime");
+      const modeSingle = document.getElementById("modeSingle");
+      const modeVersus = document.getElementById("modeVersus");
+      const modeAI = document.getElementById("modeAI");
+      const levelsRow = document.getElementById("levels");
+      const hintEl = document.getElementById("hint");
       const overlay = document.getElementById("overlay");
       const overlayTitle = document.getElementById("overlayTitle");
       const overlayText = document.getElementById("overlayText");
       const overlayButton = document.getElementById("overlayButton");
       const overlaySecondary = document.getElementById("overlaySecondary");
 
-      let state = null; // the latest game dictionary from Python
+      let state = null; // latest game dictionary from Python
 
       // ---------- talking to the server ----------
 
@@ -224,31 +281,42 @@
         return response.json();
       }
 
-      async function sendDirection(direction) {
+      // sends an action and draws the reply (used for pause, reset and mode)
+      async function act(path, body) {
         try {
-          await request("/direction", "POST", { direction: direction });
+          state = await request(path, "POST", body);
+          render();
         } catch (error) {
+          console.error(path + " error:", error);
+        }
+      }
+
+      const togglePause = () => act("/pause");
+      const restart = () => act("/reset");
+      const nextRound = () => act("/next");
+
+      // Enter and the Cross button: next round if one is waiting, otherwise start over
+      function advance() {
+        if (state && state.status === "ROUND_OVER") nextRound();
+        else restart();
+      }
+
+      function sendDirection(direction, player) {
+        request("/direction", "POST", {
+          direction: direction,
+          player: player,
+        }).catch(function (error) {
           console.error("Direction error:", error);
-        }
+        });
       }
 
-      async function togglePause() {
-        try {
-          state = await request("/pause", "POST");
-          render();
-        } catch (error) {
-          console.error("Pause error:", error);
-        }
-      }
-
-      async function restart() {
-        try {
-          state = await request("/reset", "POST");
-          render();
-        } catch (error) {
-          console.error("Reset error:", error);
-        }
-      }
+      modeSingle.onclick = () => act("/mode", { mode: "single" });
+      modeVersus.onclick = () => act("/mode", { mode: "versus" });
+      modeAI.onclick = () => act("/mode", { mode: "ai", level: "medium" });
+      document.querySelectorAll("#levels button").forEach(function (button) {
+        button.onclick = () =>
+          act("/mode", { mode: "ai", level: button.dataset.level });
+      });
 
       // ---------- drawing ----------
 
@@ -260,7 +328,6 @@
           ctx.moveTo(i * CELL, 0);
           ctx.lineTo(i * CELL, canvas.height);
           ctx.stroke();
-
           ctx.beginPath();
           ctx.moveTo(0, i * CELL);
           ctx.lineTo(canvas.width, i * CELL);
@@ -281,10 +348,28 @@
         ctx.fill();
       }
 
-      function drawSnake(snake) {
+      // golden bonus apple: blinks when it is about to disappear
+      function drawBonus(bonus) {
+        if (bonus.ticks_left <= 10 && bonus.ticks_left % 2 === 0) return;
+        const cx = bonus.x * CELL + CELL / 2;
+        const cy = bonus.y * CELL + CELL / 2;
+        ctx.fillStyle = "#f2b705";
+        ctx.strokeStyle = "#8a6400";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, CELL / 2 - 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "#fff6cc";
+        ctx.beginPath();
+        ctx.arc(cx - 3, cy - 3, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // index 0 is the head, same as in the Python list
+      function drawSnake(snake, headColor, bodyColor) {
         for (let i = 0; i < snake.length; i++) {
-          // index 0 is the head, same as in your Python list
-          ctx.fillStyle = i === 0 ? "#14342a" : "#2f6b55";
+          ctx.fillStyle = i === 0 ? headColor : bodyColor;
           ctx.fillRect(
             snake[i].x * CELL + 1,
             snake[i].y * CELL + 1,
@@ -304,49 +389,131 @@
       ) {
         overlayTitle.textContent = title;
         overlayText.textContent = text;
-        overlayButton.textContent = buttonLabel;
-        overlayButton.onclick = buttonAction;
-
-        // the second button only appears when a label is given
+        overlayButton.classList.toggle("hidden", !buttonLabel);
+        if (buttonLabel) {
+          overlayButton.textContent = buttonLabel;
+          overlayButton.onclick = buttonAction;
+        }
+        overlaySecondary.classList.toggle("hidden", !secondLabel);
         if (secondLabel) {
           overlaySecondary.textContent = secondLabel;
           overlaySecondary.onclick = secondAction;
-          overlaySecondary.classList.remove("hidden");
-        } else {
-          overlaySecondary.classList.add("hidden");
         }
         overlay.classList.remove("hidden");
       }
 
-      function render() {
-        if (state === null) return;
+      // names used in messages
+      function nameOf(index) {
+        if (state.ai_level != null) return index === 0 ? "You" : "The AI";
+        return "Player " + (index + 1);
+      }
 
-        scoreEl.textContent = state.score;
-        highScoreEl.textContent = state.high_score;
+      function winsText(index) {
+        return index === 0 && state.ai_level != null
+          ? "You win"
+          : nameOf(index) + " wins";
+      }
 
-        // clear the board, then draw everything again
-        ctx.fillStyle = "#d5e2d9";
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        drawGrid();
-        drawFood(state.food);
-        drawSnake(state.snake);
+      // round wins shown as dots, for example "●○" = 1 of 2 needed
+      function winDots(index) {
+        const wins = state.round_wins[index];
+        return (
+          "●".repeat(wins) + "○".repeat(Math.max(0, state.wins_needed - wins))
+        );
+      }
 
-        // overlay depends on the status sent by Python
-        if (state.status === "GAME_OVER") {
+      function roundReason() {
+        if (state.reason === "SELF_COLLISION") {
+          if (state.crashed.length === 2)
+            return "Both snakes hit their own tails.";
+          const i = state.crashed[0];
+          return i === 0 && state.ai_level != null
+            ? "You hit your own tail."
+            : nameOf(i) + " hit its own tail.";
+        }
+        return "Time is up.";
+      }
+
+      function showRoundOver() {
+        const p = state.players;
+        const w = state.round_wins;
+        const title =
+          state.winner === "TIE"
+            ? "Round " + state.round + " is a tie!"
+            : winsText(state.winner === "P1" ? 0 : 1) +
+              " round " +
+              state.round +
+              "!";
+        showOverlay(
+          title,
+          roundReason() +
+            "  Points " +
+            p[0].score +
+            " : " +
+            p[1].score +
+            "  |  Rounds " +
+            w[0] +
+            " : " +
+            w[1],
+          "Next round",
+          nextRound,
+        );
+      }
+
+      function showMatchOver() {
+        const w = state.round_wins;
+        const t = state.total_scores;
+        const title =
+          state.match_winner === "TIE"
+            ? "The match is a tie!"
+            : winsText(state.match_winner === "P1" ? 0 : 1) + " the match!";
+        showOverlay(
+          title,
+          "Rounds " +
+            w[0] +
+            " : " +
+            w[1] +
+            "   Total points " +
+            t[0] +
+            " : " +
+            t[1],
+          "Play again",
+          restart,
+        );
+      }
+
+      function showStatus() {
+        const s = state.status;
+        overlayTitle.classList.toggle("big", s === "COUNTDOWN");
+
+        if (s === "COUNTDOWN") {
+          showOverlay(
+            String(state.countdown),
+            "Round " +
+              state.round +
+              " of " +
+              state.max_rounds +
+              ". Race for the apples!",
+          );
+        } else if (s === "ROUND_OVER") {
+          showRoundOver();
+        } else if (s === "MATCH_OVER") {
+          showMatchOver();
+        } else if (s === "GAME_OVER") {
           showOverlay(
             "Game over",
             "Final score: " + state.score,
             "Play again",
             restart,
           );
-        } else if (state.status === "WIN") {
+        } else if (s === "WIN") {
           showOverlay(
             "You win!",
             "The snake filled the board. Score: " + state.score,
             "Play again",
             restart,
           );
-        } else if (state.status === "PAUSED") {
+        } else if (s === "PAUSED") {
           showOverlay(
             "Paused",
             "Press Space or P to continue.",
@@ -360,63 +527,164 @@
         }
       }
 
-      // ---------- keyboard ----------
+      function updateHint() {
+        const pads = connectedPads().length;
+        let text =
+          "Arrow keys / WASD or D-pad steer. Space or P pauses, Enter or R restarts.";
+        if (state && state.ai_level != null) {
+          text =
+            "You: arrow keys / WASD or controller. Player 2 is the AI. Walls wrap around. Hit yourself and you lose the round!";
+        } else if (state && state.players !== undefined) {
+          if (pads >= 2) text = "P1: controller 1.  P2: controller 2.";
+          else if (pads === 1)
+            text = "P1: controller.  P2: keyboard (arrows or WASD).";
+          else text = "P1: W A S D.  P2: arrow keys.";
+          text += " Walls wrap around. Hit yourself and you lose the round!";
+        }
+        text +=
+          "  [Controllers detected: " +
+          detectedPads().length +
+          ", using: " +
+          pads +
+          "]";
+        hintEl.textContent = text;
+      }
 
-      const KEY_TO_DIRECTION = {
-        ArrowUp: "UP",
-        w: "UP",
-        W: "UP",
-        ArrowDown: "DOWN",
-        s: "DOWN",
-        S: "DOWN",
-        ArrowLeft: "LEFT",
-        a: "LEFT",
-        A: "LEFT",
-        ArrowRight: "RIGHT",
-        d: "RIGHT",
-        D: "RIGHT",
-      };
+      function render() {
+        if (state === null) return;
+        const versus = state.players !== undefined;
+        const ai = state.ai_level != null;
 
-      window.addEventListener("keydown", function (event) {
-        const key = event.key;
+        modeSingle.classList.toggle("active", !versus);
+        modeVersus.classList.toggle("active", versus && !ai);
+        modeAI.classList.toggle("active", ai);
+        levelsRow.classList.toggle("hidden", !ai);
+        levelsRow.querySelectorAll("button").forEach(function (button) {
+          button.classList.toggle(
+            "active",
+            button.dataset.level === state.ai_level,
+          );
+        });
+        boxTime.classList.toggle("hidden", !versus);
 
-        // stop the page from scrolling when arrows or space are pressed
-        if (key.startsWith("Arrow") || key === " ") {
-          event.preventDefault();
+        if (versus) {
+          labelA.textContent = (ai ? "You" : "P1") + " " + winDots(0);
+          valueA.textContent = state.players[0].score;
+          labelB.textContent = (ai ? "AI" : "P2") + " " + winDots(1);
+          valueB.textContent = state.players[1].score;
+          valueTime.textContent = state.seconds_left;
+        } else {
+          labelA.textContent = "Score";
+          valueA.textContent = state.score;
+          labelB.textContent = "High score";
+          valueB.textContent = state.high_score;
         }
 
-        if (key === " " || key === "p" || key === "P") {
+        ctx.fillStyle = "#d5e2d9";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        drawGrid();
+        drawFood(state.food);
+        if (state.bonus) drawBonus(state.bonus);
+
+        if (versus) {
+          drawSnake(state.players[0].snake, "#14342a", "#2f6b55"); // P1 green
+          drawSnake(state.players[1].snake, "#1d3f7a", "#4a7bd0"); // P2 blue
+        } else {
+          drawSnake(state.snake, "#14342a", "#2f6b55");
+        }
+
+        showStatus();
+        updateHint();
+      }
+
+      // ---------- keyboard ----------
+
+      // each key gives a direction and which group it belongs to
+      const KEY_DIRECTIONS = {
+        ArrowUp: ["UP", "arrows"],
+        ArrowDown: ["DOWN", "arrows"],
+        ArrowLeft: ["LEFT", "arrows"],
+        ArrowRight: ["RIGHT", "arrows"],
+        w: ["UP", "wasd"],
+        s: ["DOWN", "wasd"],
+        a: ["LEFT", "wasd"],
+        d: ["RIGHT", "wasd"],
+      };
+
+      // which player does this key control? undefined = single mode, null = nobody
+      function playerForKey(group) {
+        if (!state || state.players === undefined) return undefined;
+        if (state.ai_level != null) return 1; // against the AI, every input is yours
+        const pads = connectedPads().length;
+        if (pads >= 2) return null; // both players use controllers
+        if (pads === 1) return 2; // controller is P1, keyboard is P2
+        return group === "wasd" ? 1 : 2; // no controller: WASD = P1, arrows = P2
+      }
+
+      window.addEventListener("keydown", function (event) {
+        const key =
+          event.key.length === 1 ? event.key.toLowerCase() : event.key;
+
+        if (key.startsWith("Arrow") || key === " ") event.preventDefault();
+
+        if (key === " " || key === "p") {
           togglePause();
-        } else if (key === "Enter" || key === "r" || key === "R") {
+        } else if (key === "Enter") {
+          advance();
+        } else if (key === "r") {
           restart();
-        } else if (KEY_TO_DIRECTION[key]) {
-          sendDirection(KEY_TO_DIRECTION[key]);
+        } else if (KEY_DIRECTIONS[key]) {
+          const player = playerForKey(KEY_DIRECTIONS[key][1]);
+          if (player !== null) sendDirection(KEY_DIRECTIONS[key][0], player);
         }
       });
 
-      // ---------- controller (DualShock, Xbox, etc.) ----------
-      // Browsers give every controller the same "standard" layout:
-      //   buttons 12, 13, 14, 15 = D-pad up, down, left, right
-      //   button 9 = Options / Start,  button 0 = Cross / A,  button 8 = Share / Back
+      // ---------- controllers ----------
+      // Standard layout: buttons 12-15 = D-pad, 9 = Options, 0 = Cross, 8 = Share.
+      // In versus mode the first controller is P1 and the second is P2.
+
       const PAD_DPAD = { 12: "UP", 13: "DOWN", 14: "LEFT", 15: "RIGHT" };
       const PAD_PAUSE = 9;
       const PAD_CONFIRM = 0;
       const PAD_RESTART = 8;
-      const STICK_DEADZONE = 0.5; // ignore tiny stick movements
+      const STICK_DEADZONE = 0.5;
+      const padMemory = {}; // button and stick memory for each controller
 
-      const padStatus = document.getElementById("padStatus");
-      let lastPressed = {}; // which buttons were held on the previous check
-      let lastStick = null; // which way the stick pointed on the previous check
+      // 0 = automatic (use every controller the browser reports), 1 or 2 = use only that many.
+      // Some controllers are reported twice (DS4Windows, Steam, USB + Bluetooth), so "1" fixes that.
+      let padLimit = 0;
 
-      // true only on the moment a button goes from "up" to "down"
+      function detectedPads() {
+        return Array.from(navigator.getGamepads()).filter(function (pad) {
+          return pad;
+        });
+      }
+
+      function connectedPads() {
+        const pads = detectedPads();
+        return padLimit > 0 ? pads.slice(0, padLimit) : pads;
+      }
+
+      const padLimitBtn = document.getElementById("padLimitBtn");
+      padLimitBtn.onclick = function () {
+        padLimit = (padLimit + 1) % 3; // cycles Auto -> 1 -> 2 -> Auto
+        padLimitBtn.textContent =
+          "Controllers: " + (padLimit === 0 ? "Auto" : "use " + padLimit);
+        padLimitBtn.blur(); // so Space and Enter don't press it again
+        updateHint();
+      };
+
+      // true only at the moment a button goes from up to down
       function justPressed(pad, index) {
+        if (!padMemory[pad.index])
+          padMemory[pad.index] = { buttons: {}, stick: null };
+        const memory = padMemory[pad.index].buttons;
         const isDown = pad.buttons[index] ? pad.buttons[index].pressed : false;
-        const wasDown = lastPressed[index] === true;
-        lastPressed[index] = isDown;
+        const wasDown = memory[index] === true;
+        memory[index] = isDown;
         return isDown && !wasDown;
       }
 
-      // turns the left stick position into UP / DOWN / LEFT / RIGHT (or null)
       function getStickDirection(pad) {
         const x = pad.axes[0];
         const y = pad.axes[1];
@@ -427,57 +695,51 @@
       }
 
       function pollGamepad() {
-        const pads = navigator.getGamepads();
-        const pad = pads[0] || pads[1] || pads[2] || pads[3]; // first connected controller
+        const versus = state && state.players !== undefined;
+        const ai = state && state.ai_level != null;
 
-        if (pad) {
+        connectedPads().forEach(function (pad, n) {
+          const player = ai ? 1 : versus ? n + 1 : undefined;
+          if (versus && !ai && n > 1) return; // only two human players
+
           for (const index in PAD_DPAD) {
-            if (justPressed(pad, Number(index))) {
-              sendDirection(PAD_DPAD[index]);
-            }
+            if (justPressed(pad, Number(index)))
+              sendDirection(PAD_DPAD[index], player);
           }
 
           const stick = getStickDirection(pad);
-          if (stick !== null && stick !== lastStick) {
-            sendDirection(stick);
-          }
-          lastStick = stick;
+          if (stick !== null && stick !== padMemory[pad.index].stick)
+            sendDirection(stick, player);
+          padMemory[pad.index].stick = stick;
 
           if (justPressed(pad, PAD_PAUSE)) togglePause();
           if (justPressed(pad, PAD_RESTART)) restart();
 
-          // Cross only restarts when the game has ended, so it can't ruin a run
-          const confirmPressed = justPressed(pad, PAD_CONFIRM);
+          const confirm = justPressed(pad, PAD_CONFIRM);
           if (
-            confirmPressed &&
+            confirm &&
             state &&
-            (state.status === "GAME_OVER" || state.status === "WIN")
+            (state.status === "GAME_OVER" ||
+              state.status === "WIN" ||
+              state.status === "ROUND_OVER" ||
+              state.status === "MATCH_OVER")
           ) {
-            restart();
+            advance();
           }
-        }
+        });
 
         requestAnimationFrame(pollGamepad);
       }
 
-      window.addEventListener("gamepadconnected", function (event) {
-        padStatus.textContent =
-          "Controller connected: D-pad steers, Options pauses, Cross plays again.";
-      });
-
-      window.addEventListener("gamepaddisconnected", function () {
-        padStatus.textContent = "Controller disconnected.";
-      });
-
+      window.addEventListener("gamepadconnected", updateHint);
+      window.addEventListener("gamepaddisconnected", updateHint);
       pollGamepad();
 
       // ---------- the game loop ----------
 
-      // The backend decides the speed (get_delay in practise.py).
-      // The browser just waits as long as it is told to.
+      // The backend decides the speed (state.delay). The browser just waits that long.
       function getDelay() {
-        if (state === null) return 220; // only used before the first reply arrives
-        return state.delay;
+        return state ? state.delay : 220;
       }
 
       async function gameLoop() {
@@ -485,14 +747,16 @@
         try {
           if (state === null) {
             state = await request("/state", "GET");
-          } else if (state.status === "RUNNING") {
+          } else if (
+            state.status === "RUNNING" ||
+            state.status === "COUNTDOWN"
+          ) {
             state = await request("/tick", "POST");
           }
           render();
         } catch (error) {
           console.error("Loop error (is server.py running?):", error);
         }
-        // subtract the time the request took, so slow replies don't slow the snake
         const spent = performance.now() - startTime;
         setTimeout(gameLoop, Math.max(0, getDelay() - spent));
       }
